@@ -172,6 +172,7 @@ Most settings live in `.arize/harness/config.json`, but a small set of env vars 
 | `ARIZE_LOG_FILE` | per-harness | Path the harness writes its log to. Adapters default to `~/.arize/harness/logs/<harness>.log`. |
 | `ARIZE_TRACE_DEBUG` | `false` | Dump raw hook payloads as JSON under `~/.arize/harness/state/<harness>/debug/`. Codex hooks use this for span-tree inspection. |
 | `OTEL_RESOURCE_ATTRIBUTES` | — | Standard OTel attribute string (`team=payments,environment=prod`) added to every span. Overrides `config.json` `attributes`/`harnesses.<name>.attributes` on key collision; set per-harness by placing it in that harness's settings env block. |
+| `ARIZE_WORK_ITEM_PATTERN` | — | Regex naming the work item (ticket, issue, bead) a prompt is about, e.g. `wm-[a-z0-9.]+` or `issue #(\d+)`. When it matches a subagent's prompt, the Agent tool call, the subagent span and every span under it get `work_item.id` (group 1 if the pattern has one, else the whole match); a match in the user prompt stamps the turn root. One filter then returns the whole delegated subtree. Also settable as `work_item_pattern` in `config.json` (top-level or `harnesses.<name>`); env wins, and an empty env value turns it off. Unset by default — no span changes. |
 
 **Backend overrides** (set if you want env to take priority over `config.json` for a single run):
 

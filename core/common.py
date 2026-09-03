@@ -11,6 +11,7 @@ import atexit
 import functools
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -247,6 +248,29 @@ class _Env:
 
         return merged
 
+    def get_work_item_pattern(self, service_name: str = "") -> str:
+        """Regex that names the work item (ticket, issue, bead) a prompt is about.
+
+        Precedence, first hit wins:
+
+        1. ``ARIZE_WORK_ITEM_PATTERN`` env var (an explicit empty value turns it off)
+        2. ``harnesses.<service_name>.work_item_pattern`` in config.json
+        3. top-level ``work_item_pattern`` in config.json
+        → ``""`` — the feature is off and no span is stamped.
+        """
+        raw = os.environ.get("ARIZE_WORK_ITEM_PATTERN")
+        if raw is not None:
+            return raw
+        cfg = self._top_level_config
+        if service_name:
+            harnesses = cfg.get("harnesses")
+            if isinstance(harnesses, dict):
+                entry = harnesses.get(service_name)
+                if isinstance(entry, dict) and isinstance(entry.get("work_item_pattern"), str):
+                    return entry["work_item_pattern"]
+        value = cfg.get("work_item_pattern")
+        return value if isinstance(value, str) else ""
+
     @property
     def log_prompts(self) -> bool:
         return self._resolve_log_flag("ARIZE_LOG_PROMPTS", "prompts", True)
@@ -261,6 +285,30 @@ class _Env:
 
 
 env = _Env()
+
+# Span attribute that carries the work item a prompt names. One key for every
+# harness so a single Phoenix / Arize filter finds the whole delegated subtree.
+WORK_ITEM_ATTR = "work_item.id"
+
+
+def extract_work_item_id(text: object, service_name: str = "") -> str:
+    """Return the first work-item id in ``text`` per the configured pattern, else "".
+
+    A pattern with a capture group returns group 1; otherwise the whole match.
+    Fail-soft: no pattern, non-string input, no match and an invalid regex all
+    return "" (the invalid regex is logged once per hook process).
+    """
+    pattern = env.get_work_item_pattern(service_name)
+    if not pattern or not isinstance(text, str) or not text:
+        return ""
+    try:
+        match = re.search(pattern, text)
+    except re.error as exc:
+        error(f"invalid work_item_pattern {pattern!r}: {exc}")
+        return ""
+    if match is None:
+        return ""
+    return match.group(1) if match.lastindex else match.group(0)
 
 
 def redact_content(allowed: bool, content: str) -> str:
