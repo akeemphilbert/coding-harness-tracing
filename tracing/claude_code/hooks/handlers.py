@@ -12,9 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core.common import (
+    WORK_ITEM_ATTR,
     build_span,
     env,
     error,
+    extract_work_item_id,
     generate_span_id,
     generate_trace_id,
     get_timestamp_ms,
@@ -714,6 +716,32 @@ def _merge_pending_subagents(graph, descriptors: dict[str, dict]) -> dict[str, d
     return matched
 
 
+def _work_item_attributes(graph) -> dict[str, dict]:
+    """Stamp ``work_item.id`` on every delegated subtree whose prompt names a work item.
+
+    For each AgentEvent whose input (the Agent tool prompt) matches the configured
+    pattern, the AgentEvent, the Agent tool call that spawned it, and every event
+    carrying that agent_id get the attribute — so one filter returns the whole
+    subtree. The turn root is stamped separately from the user prompt. Returns
+    ``{}`` when no pattern is configured, so the default payload is unchanged.
+    """
+    extras: dict[str, dict] = {}
+    for event in graph.events:
+        if not isinstance(event, AgentEvent) or not event.agent_id:
+            continue
+        work_item = extract_work_item_id(event.input, SERVICE_NAME)
+        if not work_item:
+            continue
+        stamp = {WORK_ITEM_ATTR: work_item}
+        extras[event.event_id] = stamp
+        if event.parent_event_id:
+            extras.setdefault(event.parent_event_id, stamp)
+        for child in graph.events:
+            if child is not event and getattr(child, "agent_id", None) == event.agent_id:
+                extras.setdefault(child.event_id, stamp)
+    return extras
+
+
 def _cleanup_pending_subagents(state, exported: dict[str, dict]) -> set[str]:
     """Acknowledge only descriptors unchanged since the export snapshot."""
     if state.state_file is None:
@@ -910,13 +938,19 @@ def _handle_stop(input_json: dict) -> None:
                 span_id_overrides.setdefault(event.event_id, generate_span_id())
             state.set("high_fidelity_span_ids", json.dumps(span_id_overrides, sort_keys=True))
 
+            root_work_item = extract_work_item_id(user_prompt, SERVICE_NAME)
+            if root_work_item:
+                root_attrs[WORK_ITEM_ATTR] = root_work_item
+            extra_attributes = _work_item_attributes(graph)
+            extra_attributes[root_event.event_id] = {**extra_attributes.get(root_event.event_id, {}), **root_attrs}
+
             payload = render_event_graph(
                 graph,
                 trace_id=trace_id,
                 service_name=SERVICE_NAME,
                 scope_name=SCOPE_NAME,
                 span_id_overrides=span_id_overrides,
-                extra_attributes={root_event.event_id: root_attrs},
+                extra_attributes=extra_attributes,
             )
             if send_span(payload) is False:
                 return
@@ -1060,6 +1094,9 @@ def _handle_subagent_stop(input_json: dict) -> None:
     stored_prompt = state.get(f"subagent_{agent_id}_prompt") or ""
     if stored_prompt:
         attrs["input.value"] = redact_content(env.log_prompts, stored_prompt)
+    work_item = extract_work_item_id(stored_prompt, SERVICE_NAME)
+    if work_item:
+        attrs[WORK_ITEM_ATTR] = work_item
     user_id = state.get("user_id") or ""
     if user_id:
         attrs["user.id"] = user_id

@@ -160,6 +160,16 @@ When a category is disabled, its values are replaced with redaction markers thro
 
 `ARIZE_TRACE_DEBUG=true` is different: it writes raw hook payloads under the harness state directory for troubleshooting. Treat those files as sensitive, enable the option only temporarily, and remove the debug directory when finished.
 
+## Linking spans to the ticket being worked
+
+Set `ARIZE_WORK_ITEM_PATTERN` to a regex for your ticket ids, under `env` in `~/.claude/settings.json` (or `work_item_pattern` in `~/.arize/harness/config.json`):
+
+```json
+{ "env": { "ARIZE_WORK_ITEM_PATTERN": "wm-[a-z0-9]+(?:\\.[0-9]+)*" } }
+```
+
+Every subagent whose prompt names a ticket gets `work_item.id` on its span, on the `Agent` tool call that spawned it, and on every LLM and tool span underneath it. A ticket named in the user prompt stamps the turn root. Filter on `work_item.id` in Phoenix or Arize to see everything done for one ticket, across turns and sessions. `OTEL_RESOURCE_ATTRIBUTES` is not an alternative here: Claude Code does not pass it to hooks.
+
 ## Verifying tracing
 
 Run any Claude Code session as you normally would (e.g. `claude` or `claude -p "hello"`). The installed hooks fire on every `SessionStart`, `UserPromptSubmit`, `PreToolUse`, etc.
